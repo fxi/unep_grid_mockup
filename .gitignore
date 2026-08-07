@@ -1,0 +1,12 @@
+node_modules/
+dist/
+
+# Local environment files; keep the deployment template tracked.
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and operating-system files.
+*.swp
+.DS_Store
