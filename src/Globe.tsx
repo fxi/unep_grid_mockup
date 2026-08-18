@@ -4,6 +4,8 @@ import maplibregl, {
   type Map as MapLibreMap,
   type StyleSpecification,
 } from "maplibre-gl";
+import { Zartigl } from "@fxi/zartigl";
+import { catalog } from "@fxi/zartigl/catalog";
 
 interface CameraBeat {
   center: LngLatLike;
@@ -25,9 +27,9 @@ interface LightingBeat {
 }
 
 const CAMERA_BEATS: Record<number, CameraBeat> = {
-  0: { center: [18, 12], zoom: 1.25, pitch: 0, bearing: -8 },
+  0: { center: [-132.454826, 85.051129], zoom: 0.511, pitch: 0, bearing: 0 },
   1: { center: [8, 15], zoom: 3.15, pitch: 25, bearing: -10 },
-  2: { center: [9.5, 46.4], zoom: 3.85, pitch: 38, bearing: 14 },
+  2: { center: [8, 46.5], zoom: 3.85, pitch: 38, bearing: 14 },
   3: { center: [122, -2], zoom: 3.05, pitch: 28, bearing: -18 },
 };
 
@@ -92,14 +94,6 @@ function createMapStyle(): StyleSpecification {
   };
 }
 
-function cameraOffset(beat: number): [number, number] {
-  const mobile = window.innerWidth < 700;
-  if (mobile) return beat === 0 ? [0, window.innerHeight * 0.13] : [0, -window.innerHeight * 0.08];
-  if (beat === 0) return [window.innerWidth * 0.2, window.innerHeight * 0.06];
-  if (beat === 2) return [-window.innerWidth * 0.2, 0];
-  return [window.innerWidth * 0.2, 0];
-}
-
 function cameraBeat(beat: number): CameraBeat {
   const base = CAMERA_BEATS[beat] ?? CAMERA_BEATS[0];
   if (beat === 0 && window.innerWidth < 700) return { ...base, zoom: 0.5 };
@@ -115,12 +109,9 @@ export default function Globe() {
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    let animationFrame = 0;
-    let flying = false;
     let activeBeat = 0;
-    let flyTimer = 0;
-    let pointerX = 0;
-    let baseBearing = CAMERA_BEATS[0].bearing;
+    let lastScrollY = window.scrollY;
+    let storyVisibility = new Map<number, boolean>();
 
     const initialCamera = cameraBeat(0);
     const map: MapLibreMap = new maplibregl.Map({
@@ -132,6 +123,13 @@ export default function Globe() {
       attributionControl: { compact: false },
       interactive: false,
       renderWorldCopies: false,
+    });
+    const zartigl = new Zartigl({
+      id: "arctic-ice-thickness",
+      map,
+      catalog,
+      backend: "geovideo",
+      geoVideo: { autoplay: true, loop: true, playbackRate: 1 },
     });
 
     const applyLighting = (beatNumber: number) => {
@@ -154,23 +152,43 @@ export default function Globe() {
       map.setPaintProperty("satellite", "raster-saturation", lighting.saturation);
     };
 
-    const syncBeat = (force = false) => {
-      const midpoint = window.innerHeight * 0.62;
-      let nextBeat = 0;
-      document.querySelectorAll<HTMLElement>("[data-beat]").forEach((element) => {
-        const rect = element.getBoundingClientRect();
-        if (rect.top < midpoint && rect.bottom > midpoint * 0.25) nextBeat = Number(element.dataset.beat);
-      });
+    const storyElements = () => Array.from(document.querySelectorAll<HTMLElement>("[data-beat] .story-content"));
 
+    const applyBeat = (nextBeat: number, force = false) => {
       if (!force && nextBeat === activeBeat) return;
       activeBeat = nextBeat;
       const beat = cameraBeat(activeBeat);
-      baseBearing = beat.bearing;
-      flying = true;
       applyLighting(activeBeat);
-      map.easeTo({ ...beat, offset: cameraOffset(activeBeat), duration: 2200, essential: true });
-      window.clearTimeout(flyTimer);
-      flyTimer = window.setTimeout(() => { flying = false; }, 2300);
+      map.flyTo({ ...beat, offset: [0, 0], duration: 1800, essential: true });
+      if (activeBeat === 0) zartigl.show();
+      else zartigl.hide();
+    };
+
+    const syncBeat = (force = false) => {
+      const elements = storyElements();
+      const visible = elements
+        .map((element) => ({
+          beat: Number(element.closest<HTMLElement>("[data-beat]")?.dataset.beat),
+          rect: element.getBoundingClientRect(),
+        }))
+        .filter(({ rect }) => rect.top < window.innerHeight && rect.bottom > 0)
+        .map(({ beat }) => beat)
+        .filter((beat) => Number.isFinite(beat));
+
+      storyVisibility = new Map(elements.map((element) => {
+        const beat = Number(element.closest<HTMLElement>("[data-beat]")?.dataset.beat);
+        const rect = element.getBoundingClientRect();
+        return [beat, rect.top < window.innerHeight && rect.bottom > 0];
+      }));
+
+      if (activeBeat > 0 && storyVisibility.get(activeBeat)) return;
+
+      const direction = window.scrollY >= lastScrollY ? 1 : -1;
+      lastScrollY = window.scrollY;
+      const nextBeat = visible.length === 0
+        ? 0
+        : direction > 0 ? Math.max(...visible) : Math.min(...visible);
+      applyBeat(nextBeat, force);
     };
 
     const onScroll = () => syncBeat();
@@ -178,21 +196,16 @@ export default function Globe() {
       map.resize();
       syncBeat(true);
     };
-    const onPointerMove = (event: PointerEvent) => {
-      pointerX = event.clientX / window.innerWidth - 0.5;
-    };
 
-    const animate = () => {
-      animationFrame = window.requestAnimationFrame(animate);
-      if (flying || !map.loaded()) return;
-      if (activeBeat === 0) {
-        const center = map.getCenter();
-        map.setCenter([center.lng + 0.008, center.lat]);
-      }
-      const targetBearing = baseBearing + pointerX * (activeBeat === 0 ? 8 : 4);
-      const bearing = map.getBearing();
-      if (Math.abs(targetBearing - bearing) > 0.05) map.setBearing(bearing + (targetBearing - bearing) * 0.04);
-    };
+    const storyObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        const beat = Number(entry.target.closest<HTMLElement>("[data-beat]")?.dataset.beat);
+        storyVisibility.set(beat, entry.isIntersecting);
+      });
+      syncBeat();
+    }, { threshold: 0 });
+
+    storyElements().forEach((element) => storyObserver.observe(element));
 
     map.on("load", () => {
       MARKERS.forEach((position) => {
@@ -200,20 +213,25 @@ export default function Globe() {
         marker.className = "map-marker";
         new maplibregl.Marker({ element: marker }).setLngLat(position).addTo(map);
       });
+      void zartigl.setLayer("sea-ice-thickness")
+        .then(() => {
+          if (activeBeat !== 0) zartigl.hide();
+        })
+        .catch((error: unknown) => {
+          console.error("Unable to load Arctic GeoVideo", error);
+          zartigl.hide();
+        });
       syncBeat(true);
-      animate();
     });
 
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onResize, { passive: true });
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
 
     return () => {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.cancelAnimationFrame(animationFrame);
-      window.clearTimeout(flyTimer);
+      storyObserver.disconnect();
+      zartigl.destroy();
       map.remove();
     };
   }, []);

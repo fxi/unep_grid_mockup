@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fxi/zartigl": "^0.2.14",
     "maplibre-gl": "^5.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

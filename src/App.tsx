@@ -77,9 +77,9 @@ const STORIES = [
   },
   {
     beat: 2,
-    location: "02 — European Alps",
+    location: "02 — Zurich",
     title: "A cryosphere in retreat",
-    copy: "Glacier inventories held in Geneva track ice volume year by year — the closest thing Europe has to a thermometer you can walk on.",
+    copy: "Glacier inventories held in Zurich track ice volume year by year — the closest thing Europe has to a thermometer you can walk on.",
     stats: [{ value: "−38%", label: "Ice volume, 2000–2025", alert: true }],
   },
   {
